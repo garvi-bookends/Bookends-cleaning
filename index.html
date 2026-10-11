@@ -686,7 +686,10 @@ html[data-theme="dark"] .rcard.low .why{color:#f8cf7a}
 .item.warn{border-color:#f3d9a0}
 html[data-theme="dark"] .item.bad{background:#2f1a20;border-color:#6a2a33}
 html[data-theme="dark"] .item.warn{border-color:#6b5520}
-@media (max-width:520px){ .item{flex-wrap:wrap} .item .rt{flex-direction:row;width:100%;justify-content:flex-start;padding-left:68px} }
+/* On a phone the badge drops under the text. It lines up with the text: past
+   the photo when the row has one (tasks, labels), at the left edge when it
+   does not (checklists). */
+@media (max-width:520px){ .item{flex-wrap:wrap} .item .rt{flex-direction:row;width:100%;justify-content:flex-start;padding-left:0} .item .ph~.rt{padding-left:68px} }
 
 /* ---------- forms ---------- */
 textarea.inp{min-height:110px;resize:vertical;line-height:1.45}
