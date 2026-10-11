@@ -10,6 +10,8 @@
 
 var db = require('../db/pool');
 var refreshTokens = require('../models/refreshTokenModel');
+var photos = require('./photoStore');
+var notify = require('./notify');
 
 /* Sign-in history is kept for six months: long enough to look into "someone
    was guessing at my account in spring", short enough not to pile up. */
@@ -28,6 +30,14 @@ function run() {
     })
     .then(function (r) {
       out.loginAudit = r.rowCount;
+      return photos.purgeAbandoned();
+    })
+    .then(function (n) {
+      out.abandonedPhotos = n;
+      return notify.purgeOld();
+    })
+    .then(function (n) {
+      out.oldNotifications = n;
       return out;
     });
 }

@@ -53,6 +53,92 @@ var FIXES = [
   }
 ];
 
+/* ---------------------------------------------------------------------------
+   Fixes for the two-role update (October 2026)
+   --------------------------------------------------------------------------- */
+var crypto = require('crypto');
+var restaurants = require('../config/restaurants');
+var windows = require('../services/checklistWindows');
+
+FIXES.push({
+  /* The Lunch, Dinner and Closing checklists start with the questions the
+     app has always asked, so nothing changes for the restaurants until an
+     admin edits them. Only when there are no items yet. */
+  key: '2026-10-seed-checklist-items',
+  run: function (client) {
+    return client.query('select count(*)::int as n from app_checklist_items').then(function (r) {
+      if (r.rows[0].n > 0) return;
+      var questions = require('../services/checklistItems').ITEMS;
+      var rows = [];
+      ['LUNCH', 'DINNER', 'CLOSING'].forEach(function (type) {
+        questions.forEach(function (q, i) {
+          rows.push(client.query(
+            'insert into app_checklist_items (id, checklist_type, text, required, photo_required, sort, created_by, updated_by) ' +
+            "values ($1, $2, $3, true, false, $4, 'system', 'system')",
+            ['CI-' + crypto.randomBytes(6).toString('hex').toUpperCase(), type, q.question, (i + 1) * 10]));
+        });
+      });
+      return Promise.all(rows);
+    });
+  }
+});
+
+FIXES.push({
+  /* Products recorded on the old Expiry and Labels screens become labels, so
+     their expiry keeps being tracked. The old rows stay where they were.
+     Each label starts in the status it is already in, so carrying them over
+     does not send a burst of "expired" notifications. */
+  key: '2026-10-labels-from-products',
+  run: function (client) {
+    return Promise.all([
+      client.query('select id, loc, data from bk_products'),
+      client.query('select id, name from app_users')
+    ]).then(function (got) {
+      var names = {};
+      got[1].rows.forEach(function (u) { names[u.id] = u.name; });
+      var now = Date.now();
+      var YMD = /^\d{4}-\d{2}-\d{2}$/;
+      return got[0].rows.reduce(function (chain, row) {
+        var p = row.data || {};
+        var loc = p.loc || row.loc;
+        if (p.deleted === true || p.status === 'Inactive' || !p.name || !YMD.test(p.expiry || '') || !restaurants.isRestaurant(loc)) return chain;
+        var expiresAt = windows.istInstant(p.expiry, 23 * 60 + 59);
+        var preparedAt = typeof p.createdAt === 'number' ? p.createdAt
+          : YMD.test(p.opened || '') ? windows.istInstant(p.opened, 0) : expiresAt - 86400000;
+        if (preparedAt >= expiresAt) preparedAt = expiresAt - 3600000;
+        var state = expiresAt <= now ? 'EXPIRED' : expiresAt - now <= 24 * 3600000 ? 'EXPIRING' : 'ACTIVE';
+        var id = 'LB-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+
+        return chain.then(function () {
+          var photo = String(p.photo || '');
+          var m = /^data:(image\/(?:jpeg|png));base64,(.+)$/.exec(photo);
+          if (m) {
+            var buf = Buffer.from(m[2], 'base64');
+            var phId = 'PH-' + crypto.randomBytes(9).toString('hex').toUpperCase();
+            return client.query(
+              'insert into app_photos (id, loc, mime, size, bytes, attached_to) values ($1, $2, $3, $4, $5, $6)',
+              [phId, loc, m[1], buf.length, buf, 'label:' + id]).then(function () { return phId; });
+          }
+          if (/^https:\/\//.test(photo)) {
+            var urlId = 'PH-' + crypto.randomBytes(9).toString('hex').toUpperCase();
+            return client.query(
+              "insert into app_photos (id, loc, mime, size, url, attached_to) values ($1, $2, 'image/jpeg', 0, $3, $4)",
+              [urlId, loc, photo, 'label:' + id]).then(function () { return urlId; });
+          }
+          return null;
+        }).then(function (photoId) {
+          return client.query(
+            'insert into app_labels (id, loc, item_name, prepared_at, expires_at, photo_id, notes, expiry_state, created_by_name, created_at, legacy_id) ' +
+            'values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) on conflict (legacy_id) do nothing',
+            [id, loc, String(p.name).slice(0, 120), new Date(preparedAt), new Date(expiresAt), photoId,
+              p.note ? String(p.note).slice(0, 500) : null, state, names[p.by] || null,
+              new Date(typeof p.createdAt === 'number' ? p.createdAt : preparedAt), String(p.id || row.id)]);
+        });
+      }, Promise.resolve());
+    });
+  }
+});
+
 function runOne(fix) {
   return db.transaction(function (client) {
     return client.query(

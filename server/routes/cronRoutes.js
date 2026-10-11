@@ -8,12 +8,15 @@
 
      GET /api/cron/cleanup   delete expired sessions, rate-limit windows and
                              sign-in history older than six months
+     GET /api/cron/tick      checklist reminders and label expiry — for an
+                             external scheduler calling it every minute
    --------------------------------------------------------------------------- */
 
 var express = require('express');
 var crypto = require('crypto');
 var config = require('../config/env');
 var cleanup = require('../services/cleanupService');
+var scheduler = require('../services/scheduler');
 var asyncHandler = require('../middleware/errorHandler').asyncHandler;
 
 var router = express.Router();
@@ -40,6 +43,10 @@ router.get('/cleanup', requireCronSecret, asyncHandler(function (req, res) {
     console.log('[cron] cleanup ' + JSON.stringify(counts));
     res.json({ ok: true, deleted: counts });
   });
+}));
+
+router.get('/tick', requireCronSecret, asyncHandler(function (req, res) {
+  return scheduler.tick().then(function (out) { res.json({ ok: true, result: out }); });
 }));
 
 module.exports = router;

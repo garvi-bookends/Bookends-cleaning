@@ -13,6 +13,7 @@ var config = require('./config/env');
 var db = require('./db/pool');
 var app = require('./app');
 var cleanup = require('./services/cleanupService');
+var scheduler = require('./services/scheduler');
 var errorHandler = require('./middleware/errorHandler');
 
 /* Confirm the database is reachable before accepting traffic, so a bad
@@ -39,11 +40,19 @@ function start() {
     }, 60 * 60 * 1000);
     if (purge.unref) purge.unref();
 
+    /* Checklist reminders and label expiry, once a minute. */
+    var ticker = setInterval(function () {
+      scheduler.tick().catch(function (err) { console.error('[scheduler] ' + err.message); });
+    }, 60 * 1000);
+    if (ticker.unref) ticker.unref();
+    setTimeout(function () { scheduler.kick(true); }, 3000);
+
     /* Finish in-flight requests and close the pool on a deploy restart. */
     ['SIGTERM', 'SIGINT'].forEach(function (sig) {
       process.on(sig, function () {
         console.log('[boot] ' + sig + ' received, shutting down');
         clearInterval(purge);
+        clearInterval(ticker);
         server.close(function () {
           db.close().then(function () { process.exit(0); }, function () { process.exit(0); });
         });

@@ -18,6 +18,55 @@ same code runs locally, on any Node host, or on **Vercel** — see
 
 ---
 
+## 0. Two-role update (October 2026) — what to do when deploying it
+
+The web app now has two roles. **Admin** covers Super Admin, Execution Head,
+Assistant Execution Head, Admin, Head of Kitchen and Auditor (view only).
+**Location Manager** covers manager and staff, limited to their own
+restaurant. The pages are:
+
+- **Admin:** Dashboard, Cleaning Task, Checklist, Labeling, and Settings, which
+  holds the Audit Log and Wipe All Data.
+- **Location Manager:** Cleaning Task, Checklist, Labeling, Expiry and Settings.
+
+**Deploy steps**
+
+1. `npm run migrate`. It adds `app_cleaning_tasks`, `app_checklist_items`,
+   `app_labels`, `app_notifications`, `app_photos` and `app_settings`, and
+   widens `app_admin_audit` into the full audit log. It is additive and safe to
+   re-run.
+2. Start the server. On the first API request two one-time fixes run:
+   - the Lunch, Dinner and Closing checklists are seeded with the existing 24
+     questions, all required, no photo;
+   - existing expiry products (`bk_products`) are copied into labels, in the
+     status they are already in, so no burst of notifications is sent.
+3. **Scheduled reminders** (opens or closes in 5 minutes, label expiring or
+   expired) come from `server/services/scheduler.js`.
+   - **Long-running server** (`npm start`): runs every minute by itself.
+   - **Vercel:** the scheduler also runs in the background whenever the app is
+     in use. For reminders that arrive on time when nobody has the app open,
+     call `GET /api/cron/tick` every minute with
+     `Authorization: Bearer <CRON_SECRET>` from an external scheduler (Vercel
+     Hobby crons can only run daily).
+
+**Photos** for tasks, checklists and labels go to `POST /api/files`. Only
+real JPEG or PNG files up to 2 MB are accepted, and each account can upload
+300 an hour. Photos are stored in Postgres, or in Vercel Blob when
+`BLOB_READ_WRITE_TOKEN` is set. They are only ever served through signed
+links that expire after 6 hours, issued to someone allowed to see the record.
+
+**Wipe All Data** (Super Admin, Execution Head, Assistant Execution Head,
+Admin) needs the typed phrase and the admin's own password. It deletes tasks,
+checklist submissions, labels, notifications and photos, plus the older synced
+jobs and products. It keeps accounts, checklist items and the audit log. No
+endpoint deletes audit history.
+
+The endpoints used by the Flutter app (`/api/sync`, `/api/photos`,
+`/api/checklist/*`, and `/api/checklists` with the old `answers` array) still
+work as before.
+
+---
+
 ## 1. Folder structure
 
 ```

@@ -2,10 +2,11 @@
 /* ---------------------------------------------------------------------------
    /api/admin — user administration (reqs 1, 2, 6).
 
-   Every route here is behind requireAuth + requireSuperadmin. User
-   Management is the Super Admin's alone, the same as in the app: no other
-   role can list, create, edit, reset or remove accounts, or read the
-   sign-in trail.
+   Every route here is behind requireAuth + requireManager: the admins who
+   manage accounts (Super Admin, Execution Head, Assistant Execution Head,
+   Admin). Approving a self sign-up and answering a "forgot password" request
+   stay with the Super Admin alone. Every change to an account is written to
+   the audit log.
 
    Endpoints:
      GET    /api/admin/users                    list accounts with login info
@@ -25,6 +26,11 @@ var passwords = require('../services/passwordService');
 var config = require('../config/env');
 var requireAuth = require('../middleware/requireAuth');
 var requireSuperadmin = require('../middleware/requireRole').requireSuperadmin;
+var requireManager = require('../middleware/requireRole').requireManager;
+var audit = require('../services/audit');
+var photos = require('../services/photoStore');
+var settings = require('../services/settings');
+var windows = require('../services/checklistWindows');
 var validate = require('../middleware/validate');
 var asyncHandler = require('../middleware/errorHandler').asyncHandler;
 var jobs = require('../models/jobModel');
@@ -48,8 +54,15 @@ function protectsSuperadmin(req, res, target) {
   return false;
 }
 
-/* Everything below this line needs the signed-in Super Admin. */
-router.use(requireAuth, requireSuperadmin);
+/* Everything below this line needs a signed-in admin who manages accounts. */
+router.use(requireAuth, requireManager, audit.withActor);
+
+var ROLE_NAME = function (role) { return userModel.ALL_LOCATION_ROLES.indexOf(role) > -1 ? 'Admin' : 'Location Manager'; };
+function userAudit(req, action, user, summary) {
+  return audit.record(audit.actorOf(req), action, {
+    loc: user.loc || null, entityType: 'user', entityId: user.id, ip: req.ip, summary: summary
+  });
+}
 
 /* The admin view of an account. It includes the login bookkeeping from req 6
    — first-login status, last login, creation date — and still no hash. */
@@ -156,6 +169,7 @@ router.post('/users', validate.validateCreateUser, asyncHandler(function (req, r
     })
     .then(function (user) {
       console.log('[admin] ' + req.auth.uid + ' created user ' + user.uid + ' (' + user.role + ')');
+      userAudit(req, 'user.create', user, 'Created account ' + user.name + ' (' + user.uid + ') as ' + ROLE_NAME(user.role));
       res.status(201).json({
         user: adminUser(user),
         /* Shown once in the "User created" panel. Not stored anywhere in this
@@ -189,6 +203,7 @@ router.post('/users/:id/approve', requireSuperadmin, validate.validateUserIdPara
 
     return userModel.approveUser(targetId, req.valid.role, loc).then(function (user) {
       console.log('[admin] ' + req.auth.uid + ' approved ' + user.uid + ' as ' + user.role + (user.loc ? ' @ ' + user.loc : ''));
+      userAudit(req, 'user.approve', user, 'Approved the sign-up of ' + user.name + ' (' + user.uid + ') as ' + ROLE_NAME(user.role));
       res.json({ user: adminUser(user) });
     });
   });
@@ -258,6 +273,8 @@ router.patch('/users/:id', validate.validateUserIdParam, validate.validateUpdate
         return userModel.updateProfile(targetId, patch);
       }).then(function (user) {
         console.log('[admin] ' + req.auth.uid + ' updated user ' + user.uid + ': ' + JSON.stringify(patch));
+        userAudit(req, 'user.update', user, 'Updated account ' + user.name + ' (' + user.uid + ')' +
+          (patch.disabled === true ? ' — disabled' : patch.disabled === false ? ' — enabled' : ''));
         res.json({ user: adminUser(user) });
       });
     }
@@ -287,6 +304,7 @@ router.post('/users/:id/reset-password', validate.validateUserIdParam, validate.
 
     return authService.resetPassword(targetId, req.valid.password).then(function (result) {
       console.log('[admin] ' + req.auth.uid + ' reset the password for ' + result.user.uid);
+      userAudit(req, 'user.reset_password', result.user, 'Set a new password for ' + result.user.name + ' (' + result.user.uid + ')');
       res.json({
         user: adminUser(result.user),
         password: result.password        // displayed once so the admin can pass it on
@@ -329,6 +347,7 @@ router.delete('/users/:id', validate.validateUserIdParam, asyncHandler(function 
       .then(function () { return userModel.deleteUser(targetId); })
       .then(function () {
         console.log('[admin] ' + req.auth.uid + ' deleted user ' + target.uid);
+        userAudit(req, 'user.delete', target, 'Removed account ' + target.name + ' (' + target.uid + ')');
         res.json({ ok: true, id: targetId });
       });
   });
@@ -362,51 +381,92 @@ router.get('/login-audit', asyncHandler(function (req, res) {
 }));
 
 /* ---------------------------------------------------------------------------
-   POST /api/admin/wipe   { confirm: 'WIPE ALL DATA' }   — Super Admin only
+   POST /api/admin/wipe   { confirm: 'WIPE ALL DATA', password }
 
-   Deletes the RECORDS: cleaning jobs, label and expiry records, daily
-   checklist submissions, and the photo files. Keeps everything that was SET
-   UP: accounts and passwords, job types, services and assignments.
+   Admins who manage accounts only (requireManager above), and only with the
+   phrase typed out AND their own password, checked here against its hash.
+   The UI's warnings stop an accidental tap; these checks are what decide.
 
-   The sync epoch changes in the same transaction, so every device drops its
-   own copy on its next sync instead of uploading the deleted records back.
-   Photo files are deleted from the store after the commit; a failure there
-   is reported in the count, never as a failed wipe.
+   Deletes the operational RECORDS, all in one transaction:
+     cleaning tasks, checklist submissions, labels, notifications, photos,
+     and the older synced cleaning jobs and products.
+   Keeps everything that was SET UP:
+     accounts and passwords, checklist items, job types and services.
+   Keeps the AUDIT LOG: app_admin_audit is never touched by a wipe, and the
+   wipe itself is added to it. There is no endpoint that deletes audit
+   history; that would need a separate, explicitly authorised process.
+
+   The sync epoch (the time of this audit row) changes in the same
+   transaction, so older devices drop their copy instead of uploading the
+   deleted records back. Stored photo files are removed after the commit; a
+   failure there is reported in the count, never as a failed wipe.
    --------------------------------------------------------------------------- */
 var WIPE_PHRASE = 'WIPE ALL DATA';
 
-router.post('/wipe', requireSuperadmin, asyncHandler(function (req, res) {
-  if (!req.body || req.body.confirm !== WIPE_PHRASE) {
+router.post('/wipe', asyncHandler(function (req, res) {
+  var body = req.body || {};
+  if (body.confirm !== WIPE_PHRASE) {
     return res.status(400).json({ error: 'Type ' + WIPE_PHRASE + ' to confirm', code: 'CONFIRM_REQUIRED' });
   }
-  return Promise.resolve().then(function () {
+  if (typeof body.password !== 'string' || !body.password) {
+    return res.status(400).json({ error: 'Enter your password to confirm', code: 'PASSWORD_REQUIRED' });
+  }
+  var actor = audit.actorOf(req);
+
+  return userModel.findCredentialById(req.auth.id).then(function (hash) {
+    return hash ? passwords.verify(body.password, hash) : false;
+  }).then(function (ok) {
+    if (!ok) {
+      audit.record(actor, 'wipe.refused', { ip: req.ip, summary: 'Wipe All Data refused: wrong password' });
+      return res.status(403).json({ error: 'That password is not correct. Nothing was wiped.', code: 'WRONG_PASSWORD' });
+    }
+
+    var blobUrls = [];
     return db.transaction(function (client) {
       var out = {};
-      return client.query('delete from bk_tasks').then(function (r) { out.tasks = r.rowCount; })
-        .then(function () { return client.query('delete from bk_products'); }).then(function (r) { out.labels = r.rowCount; })
-        .then(function () { return client.query('delete from app_checklists'); }).then(function (r) { out.checklists = r.rowCount; })
+      function count(sql, key) {
+        return client.query(sql).then(function (r) { out[key] = r.rowCount; });
+      }
+      return count('delete from app_cleaning_tasks', 'cleaningTasks')
+        .then(function () { return count('delete from app_checklists', 'checklists'); })
+        .then(function () { return count('delete from app_labels', 'labels'); })
+        .then(function () { return count('delete from app_notifications', 'notifications'); })
+        .then(function () { return client.query('delete from app_photos returning url'); })
+        .then(function (r) {
+          out.photos = r.rowCount;
+          blobUrls = r.rows.map(function (x) { return x.url; }).filter(Boolean);
+        })
+        .then(function () { return count('delete from bk_tasks', 'tasks'); })
+        .then(function () { return count('delete from bk_products', 'products'); })
         .then(function () { return client.query('select count(*)::int as n from app_users'); }).then(function (r) { out.accounts_kept = r.rows[0].n; })
-        .then(function () { return client.query('select count(*)::int as n from bk_checklist where deleted = false'); })
-        .then(function (r) { out.services_kept = r.rows[0].n; })
+        .then(function () { return client.query('select count(*)::int as n from app_checklist_items where active = true'); })
+        .then(function (r) { out.checklist_items_kept = r.rows[0].n; })
+        .then(function () {
+          /* Days before today no longer count as Missed: their records are gone. */
+          return settings.set('checklist_tracking_since', windows.istParts(Date.now()).ymd, client);
+        })
         .then(function () {
           /* The time of this row is the new sync epoch. */
           return client.query(
-            "insert into app_admin_audit (action, actor_id, actor_uid, actor_role, ip, detail) values ('wipe', $1, $2, $3, $4, $5) returning at",
-            [req.auth.id, req.auth.uid, req.auth.role, req.ip || null, out]);
+            'insert into app_admin_audit (action, actor_id, actor_uid, actor_role, actor_name, ip, summary, detail) ' +
+            "values ('wipe', $1, $2, $3, $4, $5, $6, $7) returning at",
+            [req.auth.id, req.auth.uid, req.auth.role, actor.name, req.ip || null,
+              'Wiped all application data (' + out.cleaningTasks + ' tasks, ' + out.checklists + ' checklists, ' +
+              out.labels + ' labels, ' + out.photos + ' photos). Accounts, settings and the audit log were kept.', out]);
         })
         .then(function (r) { out.at = new Date(r.rows[0].at).toISOString(); return out; });
-    });
-  }).then(function (out) {
-    return deletePhotoFiles().then(function (n) {
-      out.photos = n;
-      console.warn('[admin] ' + req.auth.uid + ' WIPED all data: ' + JSON.stringify(out));
-      res.json({ wiped: out });
+    }).then(function (out) {
+      return photos.deleteBlobs(blobUrls).then(deleteLegacyPhotoFiles).then(function (n) {
+        out.photoFiles = blobUrls.length + n;
+        console.warn('[admin] ' + req.auth.uid + ' WIPED all data: ' + JSON.stringify(out));
+        res.json({ wiped: out });
+      });
     });
   });
 }));
 
-/* Every uploaded photo lives under photos/ in the Blob store. */
-function deletePhotoFiles() {
+/* Photos the older app uploaded to the Blob store under photos/. */
+function deleteLegacyPhotoFiles() {
   if (!config.blobToken) return Promise.resolve(0);
   var blob;
   try { blob = require('@vercel/blob'); } catch (e) { return Promise.resolve(0); }

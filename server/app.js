@@ -115,6 +115,15 @@ app.use('/api', function (req, res, next) {
   oneTimeFixes.ready().then(function () { next(); });
 });
 
+/* Time-based reminders and expiry checks. A long-running server also runs
+   these every minute (server.js); this keeps a serverless host on time too,
+   as long as someone is using the app. It never delays the request. */
+var scheduler = require('./services/scheduler');
+app.use('/api', function (req, res, next) {
+  if (req.path.indexOf('/cron/') !== 0) scheduler.kick();
+  next();
+});
+
 /* --------------------------------------------------------------------------
    Routes
    -------------------------------------------------------------------------- */
@@ -147,6 +156,12 @@ app.use('/api/photos', require('./routes/photoRoutes'));
 app.use('/api/cron', require('./routes/cronRoutes'));
 app.use('/api/checklist', require('./routes/jobRoutes'));        // Job Management
 app.use('/api/checklists', require('./routes/checklistRoutes'));  // Lunch / Dinner / Closing
+app.use('/api/tasks', require('./routes/taskRoutes'));            // Cleaning Task
+app.use('/api/labels', require('./routes/labelRoutes'));          // Labeling and Expiry
+app.use('/api/files', require('./routes/fileRoutes'));            // task, checklist and label photos
+app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/dashboard', require('./routes/dashboardRoutes'));   // Admin Dashboard
+app.use('/api/audit', require('./routes/auditRoutes'));           // Admin Settings > Audit Log
 
 /* An unmatched /api/* path returns JSON, not the SPA shell, so a typo in a
    fetch URL shows up as a 404 instead of index.html failing to parse. */

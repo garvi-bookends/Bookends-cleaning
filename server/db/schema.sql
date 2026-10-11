@@ -276,6 +276,166 @@ create unique index if not exists app_checklists_one_per_loc_shift
   on app_checklists (loc, checklist_type, shift_date);
 create index if not exists app_checklists_shift on app_checklists (shift_date desc, loc);
 
+-- ---------------------------------------------------------------------------
+-- 4h. Audit log — every important action, not only wipes.
+--
+-- app_admin_audit started as the wipe log (and the latest wipe is still the
+-- sync epoch, read with action = 'wipe'). It now records task, checklist and
+-- label actions too, so the action check is widened and the columns the
+-- Audit Log screen shows are added. A wipe NEVER deletes from this table.
+-- ---------------------------------------------------------------------------
+alter table app_admin_audit drop constraint if exists app_admin_audit_action;
+alter table app_admin_audit add constraint app_admin_audit_action check (char_length(action) between 1 and 40);
+alter table app_admin_audit add column if not exists actor_name  text;
+alter table app_admin_audit add column if not exists loc         text;
+alter table app_admin_audit add column if not exists entity_type text;
+alter table app_admin_audit add column if not exists entity_id   text;
+alter table app_admin_audit add column if not exists summary     text;
+create index if not exists app_admin_audit_at  on app_admin_audit (at desc);
+create index if not exists app_admin_audit_loc on app_admin_audit (loc, at desc);
+
+-- ---------------------------------------------------------------------------
+-- 4i. Small key/value settings the server keeps for itself.
+--     checklist_tracking_since: the first IST date a checklist that was not
+--     sent counts as Missed. Without it every day before the app existed
+--     would show as Missed. A wipe moves it to the wipe date.
+-- ---------------------------------------------------------------------------
+create table if not exists app_settings (
+  key        text        primary key,
+  value      text        not null,
+  updated_at timestamptz not null default now()
+);
+insert into app_settings (key, value)
+  values ('checklist_tracking_since', to_char((now() at time zone 'Asia/Kolkata')::date, 'YYYY-MM-DD'))
+  on conflict (key) do nothing;
+
+-- ---------------------------------------------------------------------------
+-- 4j. Photos — cleaning task, checklist and label photos.
+--
+-- One row per uploaded photo. The bytes live here, or, when a Vercel Blob
+-- store is configured, in the store with only its URL here. Photos are only
+-- ever handed out through short-lived signed links, made for someone who is
+-- allowed to see the record the photo belongs to.
+-- ---------------------------------------------------------------------------
+create table if not exists app_photos (
+  id          text        primary key,
+  loc         text,
+  mime        text        not null,
+  size        integer     not null,
+  bytes       bytea,
+  url         text,
+  uploaded_by text        references app_users(id) on delete set null,
+  attached_to text,                                -- 'task:CT-…', 'label:LB-…', 'checklist:CL-…'
+  created_at  timestamptz not null default now(),
+  constraint app_photos_mime check (mime in ('image/jpeg', 'image/png')),
+  constraint app_photos_stored check (bytes is not null or url is not null)
+);
+create index if not exists app_photos_unattached on app_photos (created_at) where attached_to is null;
+
+-- ---------------------------------------------------------------------------
+-- 4k. Cleaning tasks — created and assigned to a restaurant by an admin,
+--     completed with a photo by that restaurant's location manager.
+-- ---------------------------------------------------------------------------
+create table if not exists app_cleaning_tasks (
+  id                  text        primary key,
+  title               text        not null,
+  loc                 text        not null,
+  instructions        text,
+  due_at              timestamptz not null,
+  ref_photo_id        text        references app_photos(id) on delete set null,
+  status              text        not null default 'PENDING',
+  created_by          text        references app_users(id) on delete set null,
+  created_by_name     text,
+  created_at          timestamptz not null default now(),
+  completed_by        text        references app_users(id) on delete set null,
+  completed_by_name   text,
+  completed_at        timestamptz,
+  completion_photo_id text        references app_photos(id) on delete set null,
+  completion_note     text,
+  updated_at          timestamptz not null default now(),
+  constraint app_cleaning_tasks_status check (status in ('PENDING', 'DONE')),
+  constraint app_cleaning_tasks_title_len check (char_length(title) between 1 and 120),
+  constraint app_cleaning_tasks_instr_len check (instructions is null or char_length(instructions) <= 2000),
+  constraint app_cleaning_tasks_note_len check (completion_note is null or char_length(completion_note) <= 500),
+  constraint app_cleaning_tasks_done_full check (status <> 'DONE' or (completed_at is not null and completion_photo_id is not null))
+);
+create index if not exists app_cleaning_tasks_loc on app_cleaning_tasks (loc, status, due_at);
+
+-- ---------------------------------------------------------------------------
+-- 4l. Checklist items — what each of Lunch, Dinner and Closing asks for.
+--     Edited by admins with the (+) button. A submission keeps its own copy
+--     of the wording, so changing an item never rewrites a past record.
+-- ---------------------------------------------------------------------------
+create table if not exists app_checklist_items (
+  id             text        primary key,
+  checklist_type text        not null,
+  text           text        not null,
+  required       boolean     not null default true,
+  photo_required boolean     not null default false,
+  sort           integer     not null default 100,
+  active         boolean     not null default true,
+  created_by     text,
+  created_at     timestamptz not null default now(),
+  updated_by     text,
+  updated_at     timestamptz not null default now(),
+  constraint app_checklist_items_type check (checklist_type in ('LUNCH', 'DINNER', 'CLOSING')),
+  constraint app_checklist_items_text_len check (char_length(text) between 1 and 300)
+);
+create index if not exists app_checklist_items_type on app_checklist_items (checklist_type, active, sort);
+
+-- ---------------------------------------------------------------------------
+-- 4m. Labels — a prepared item, when it was made and when it expires, with
+--     its photo. expiry_state is what the scheduler last saw, so a change
+--     (Active -> Expiring Soon -> Expired) is noticed once, logged once and
+--     notified once. What the screens show is worked out from expires_at at
+--     the moment of reading, so it is right even between scheduler runs.
+-- ---------------------------------------------------------------------------
+create table if not exists app_labels (
+  id              text        primary key,
+  loc             text        not null,
+  item_name       text        not null,
+  prepared_at     timestamptz not null,
+  expires_at      timestamptz not null,
+  photo_id        text        references app_photos(id) on delete set null,
+  notes           text,
+  expiry_state    text        not null default 'ACTIVE',
+  created_by      text        references app_users(id) on delete set null,
+  created_by_name text,
+  created_at      timestamptz not null default now(),
+  updated_by_name text,
+  updated_at      timestamptz not null default now(),
+  discarded_at    timestamptz,
+  discarded_by_name text,
+  legacy_id       text        unique,              -- bk_products id it was carried over from
+  constraint app_labels_state check (expiry_state in ('ACTIVE', 'EXPIRING', 'EXPIRED')),
+  constraint app_labels_name_len check (char_length(item_name) between 1 and 120),
+  constraint app_labels_notes_len check (notes is null or char_length(notes) <= 500),
+  constraint app_labels_dates check (expires_at > prepared_at)
+);
+create index if not exists app_labels_loc on app_labels (loc, expires_at) where discarded_at is null;
+
+-- ---------------------------------------------------------------------------
+-- 4n. Notifications — one row per person. dedupe_key makes a scheduled
+--     reminder idempotent: however many times the scheduler runs in its
+--     window, each person gets it once.
+-- ---------------------------------------------------------------------------
+create table if not exists app_notifications (
+  id         bigserial   primary key,
+  user_id    text        not null references app_users(id) on delete cascade,
+  kind       text        not null,
+  title      text        not null,
+  body       text,
+  loc        text,
+  link_type  text,
+  link_id    text,
+  dedupe_key text,
+  created_at timestamptz not null default now(),
+  read_at    timestamptz
+);
+create unique index if not exists app_notifications_dedupe on app_notifications (user_id, dedupe_key) where dedupe_key is not null;
+create index if not exists app_notifications_user on app_notifications (user_id, created_at desc);
+create index if not exists app_notifications_unread on app_notifications (user_id) where read_at is null;
+
 create index if not exists bk_tasks_upd    on bk_tasks (updated_at);
 create index if not exists bk_products_upd on bk_products (updated_at);
 create index if not exists bk_tasks_loc    on bk_tasks (loc, updated_at);
@@ -301,6 +461,12 @@ alter table bk_checklist         enable row level security;
 alter table bk_checklist_audit   enable row level security;
 alter table app_admin_audit      enable row level security;
 alter table app_checklists       enable row level security;
+alter table app_settings         enable row level security;
+alter table app_photos           enable row level security;
+alter table app_cleaning_tasks   enable row level security;
+alter table app_checklist_items  enable row level security;
+alter table app_labels           enable row level security;
+alter table app_notifications    enable row level security;
 
 -- A database that used to be the Supabase cloud-sync target still has the old
 -- "anyone may do anything" policies on bk_tasks / bk_products. Drop them, so
@@ -328,7 +494,9 @@ begin
                           'app_refresh_tokens', 'app_login_audit',
                           'app_rate_limits', 'bk_tasks', 'bk_products',
                           'bk_job_types', 'bk_checklist', 'bk_checklist_audit',
-                          'app_admin_audit', 'app_checklists'])
+                          'app_admin_audit', 'app_checklists', 'app_settings',
+                          'app_photos', 'app_cleaning_tasks', 'app_checklist_items',
+                          'app_labels', 'app_notifications'])
     loop
       execute format('revoke all on table %I from %I', tbl, r);
     end loop;
