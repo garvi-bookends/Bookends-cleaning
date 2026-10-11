@@ -951,7 +951,7 @@ window.onerror = function (msg, src, line) {
 
    Admin              Dashboard · Cleaning Task · Checklist · Labeling · Settings
                       (Settings: Audit Log, Wipe All Data)
-   Location Manager   Cleaning Task · Checklist · Labeling · Expiry · Settings
+   Location Manager   Cleaning Task · Checklist · Labeling · Settings
 
    Everything is stored on the server and every rule is checked there: who
    may see which restaurant, who may create or wipe, when a checklist is
@@ -1509,7 +1509,7 @@ function navItems() {
   ];
   return [
     ['tasks', 'Cleaning Task', 'clean'], ['checklist', 'Checklist', 'chk'], ['labeling', 'Labeling', 'lab'],
-    ['expiry', 'Expiry', 'exp'], ['settings', 'Settings', 'gear']
+    ['settings', 'Settings', 'gear']
   ];
 }
 function homePage() { return isAdmin() ? 'dashboard' : 'tasks'; }
@@ -1660,7 +1660,7 @@ function openLink(type, id) {
   if (type === 'task') { go('tasks'); openTask(id); }
   else if (type === 'checklist') { go('checklist'); if (isAdmin()) S.ckTab = 'board'; openChecklistRecord(id); }
   else if (type === 'checklist-type') { go('checklist'); if (!isAdmin()) setTimeout(function () { openChecklistFill(id, true); }, 300); }
-  else if (type === 'label') { go(isAdmin() ? 'labeling' : 'expiry'); openLabel(id); }
+  else if (type === 'label') { go('labeling'); openLabel(id); }
 }
 
 /* ---------------------------------------------------------------------
