@@ -45,9 +45,19 @@ var TABLES = [
   'bk_checklist',
   'bk_checklist_audit',
   'app_admin_audit',
-  'app_checklists'
+  'app_checklists',
+  'app_settings',
+  'app_one_time_fixes',
+  /* Photos before the records that point at them. Run `npm run photos-to-blob`
+     first: a photo still held as bytes in Postgres cannot travel through the
+     JSON this copy uses, so only its Blob link should be left to copy. */
+  'app_photos',
+  'app_cleaning_tasks',
+  'app_checklist_items',
+  'app_labels',
+  'app_notifications'
 ];
-var SERIAL_TABLES = ['app_login_audit', 'bk_checklist_audit', 'app_admin_audit'];
+var SERIAL_TABLES = ['app_login_audit', 'bk_checklist_audit', 'app_admin_audit', 'app_notifications'];
 /* schema.sql seeds the built-in job types, so the source's copy of those rows
    (renamed, switched off) must replace the seeded one, not be skipped. */
 var UPSERT_KEY = { bk_job_types: 'id' };
@@ -78,6 +88,7 @@ function copyTable(src, dst, table) {
   return Promise.all([columns(src, table), columns(dst, table)]).then(function (cols) {
     if (!cols[0].length) { console.log('  - ' + table + ': not in the source, skipped'); return; }
     var shared = cols[0].filter(function (c) { return cols[1].indexOf(c) > -1; });
+    if (!shared.length) throw new Error(table + ' is not on the target — add it to schema.sql');
     var list = shared.map(function (c) { return '"' + c + '"'; }).join(', ');
     return src.query('select ' + list + ' from ' + table).then(function (r) {
       var rows = r.rows, saved = 0, i = 0;
@@ -115,10 +126,21 @@ function main() {
   console.log('\n[copy-db] from ' + hostOf(SOURCE) + '\n[copy-db] to   ' + hostOf(TARGET) + '\n');
 
   var src = client(SOURCE), dst = client(TARGET);
-  return src.connect().then(function () { return dst.connect(); }).then(function () {
+  return src.connect().then(function () {
+    return src.query("select count(*)::int as n from app_photos where bytes is not null and url is null")
+      .catch(function () { return { rows: [{ n: 0 }] }; });
+  }).then(function (r) {
+    if (r.rows[0].n) throw new Error(r.rows[0].n + ' photo(s) are still stored inside the database. Run `npm run photos-to-blob` first.');
+    return dst.connect();
+  }).then(function () {
     var sql = fs.readFileSync(path.join(__dirname, '..', 'db', 'schema.sql'), 'utf8');
     console.log('[copy-db] creating tables on the target');
-    return dst.query('begin').then(function () { return dst.query(sql); }).then(function () { return dst.query('commit'); });
+    return dst.query('begin').then(function () { return dst.query(sql); })
+      /* Made by oneTimeFixes.js at boot, not by schema.sql. Its rows must
+         come across, or the fixes run again on the new database — and one of
+         them resets Admin EXE to the starting password. */
+      .then(function () { return dst.query('create table if not exists app_one_time_fixes (key text primary key, done_at timestamptz not null default now())'); })
+      .then(function () { return dst.query('commit'); });
   }).then(function () {
     console.log('[copy-db] copying rows');
     return TABLES.reduce(function (p, t) { return p.then(function () { return copyTable(src, dst, t); }); }, Promise.resolve());

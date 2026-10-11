@@ -24,6 +24,7 @@
     "vercel:headers": "node scripts/build.js --print",
     "import:supabase": "node server/scripts/importSupabase.js",
     "copy-db": "node server/scripts/copyDatabase.js",
+    "photos-to-blob": "node server/scripts/photosToBlob.js",
     "test": "node --test \"server/tests/*.test.js\""
   },
   "dependencies": {

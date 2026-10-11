@@ -2171,7 +2171,7 @@ function drawFill(type) {
   var photosDone = photoNeeded.filter(function (i) { return photoReady('ck:' + i.id); }).length;
   var html = '<div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
     '<div class="grow"><div class="b">' + h(lname(ME.loc)) + '</div><div class="sm muted b">Closes at ' + h(clock(w.endsAt)) + ' · ' + span(w.endsAt - now()) + ' left</div></div>' +
-    '<div class="b" style="font-size:18px">' + reqDone + ' / ' + req.length + '<div class="xs muted">required done</div></div></div>' +
+    '<div class="b" style="font-size:18px">' + reqDone + ' / ' + req.length + '<div class="xs muted">done</div></div></div>' +
     (d.err ? '<div class="formerr">' + h(d.err) + '</div>' : '') +
     '<div class="card pad0">' + items.map(function (it) {
       var on = !!d.done[it.id];
@@ -2179,7 +2179,6 @@ function drawFill(type) {
       return '<div class="cki' + (on ? ' on' : '') + '">' +
         '<button class="box" data-a="ckTick" data-x="' + it.id + '" data-t="' + type + '" role="checkbox" aria-checked="' + on + '" aria-label="' + h(it.text) + '">' + (on ? '✓' : '') + '</button>' +
         '<div class="q"><span data-a="ckTick" data-x="' + it.id + '" data-t="' + type + '">' + h(it.text) + '</span>' +
-        '<small>' + (it.required ? '<span class="req">Required</span>' : 'Optional') + (it.photoRequired ? ' · <span class="req">Photo required</span>' : '') + '</small>' +
         (it.photoRequired ? (p && p.preview
           ? '<img class="pthumb" src="' + h(p.preview) + '" alt="Photo">' + (p.busy ? '<div class="photo-busy">Uploading…</div>' : p.err ? '<div class="ck-err">' + h(p.err) + '</div>' : '') +
             '<button class="btn sec pbtn" data-a="ckPhoto" data-x="' + it.id + '" data-t="' + type + '">Retake photo</button>'
