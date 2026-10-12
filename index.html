@@ -926,6 +926,14 @@ html[data-theme="dark"] .switch.on,html[data-theme="dark"] .toast{background:#2b
 html[data-theme="dark"] .btn.sec,html[data-theme="dark"] .chip:not(.on){background:#1a2547 !important;background-image:none !important;color:#c9d5ff !important;border:1.5px solid #2e3c6b !important}
 html[data-theme="dark"] .card,html[data-theme="dark"] .tile,html[data-theme="dark"] .item,html[data-theme="dark"] .dgroup,html[data-theme="dark"] .rcard,
 html[data-theme="dark"] .ckcard,html[data-theme="dark"] .gotile{background:#131c38;background-image:none;border-color:#26325a}
+/* ---------- show / hide password eye ---------- */
+.pwwrap{position:relative;display:block}
+.pwwrap .inp{padding-right:54px !important}
+.pweye{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;background:none;
+  display:grid;place-items:center;color:var(--mut);cursor:pointer;border-radius:50%;padding:0}
+.pweye:active{background:rgba(0,0,0,.06)}
+.pweye svg{width:22px;height:22px;fill:currentColor}
+body.signedout .pweye{color:#8a8a8a;box-shadow:none !important;background:none !important}
 </style>
 </head>
 <body>
@@ -2798,6 +2806,47 @@ function doResetPw(id) {
       '<div class="sm muted">This is the only time it is shown.</div></div><button class="btn" data-a="closeSheet">Done</button>');
   }, function (err) { RESET_ERR = err.message; resetPwSheet(id); });
 }
+
+/* ---------------------------------------------------------------------
+   Show / hide password: an eye on every password field, wherever it is
+   drawn (sign in, sign up, change password, wipe). Screens are redrawn as
+   HTML strings, so instead of editing each form, any password field that
+   appears gets its eye added here. Tap it to see what you typed; tap again
+   to hide it.
+   --------------------------------------------------------------------- */
+var EYE_OPEN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5C6.5 5 2.7 9.1 1.5 12c1.2 2.9 5 7 10.5 7s9.3-4.1 10.5-7C21.3 9.1 17.5 5 12 5zm0 11.5A4.5 4.5 0 1 1 12 7.5a4.5 4.5 0 0 1 0 9zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>';
+var EYE_SHUT = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.3 2 2 3.3l3.1 3.1C3.4 7.8 2.2 9.8 1.5 12c1.2 2.9 5 7 10.5 7 1.9 0 3.6-.5 5.1-1.3l3.6 3.6 1.3-1.3L3.3 2zM12 16.5A4.5 4.5 0 0 1 7.5 12c0-.8.2-1.5.5-2.1l1.5 1.5a2.5 2.5 0 0 0 3.1 3.1l1.5 1.5c-.6.3-1.3.5-2.1.5zM12 5c-1.3 0-2.5.2-3.6.6l1.7 1.7c.6-.2 1.2-.3 1.9-.3a4.5 4.5 0 0 1 4.5 4.5c0 .7-.1 1.3-.3 1.9l2.6 2.6c1.7-1.3 2.9-3 3.7-4.5C21.3 9.1 17.5 5 12 5z"/></svg>';
+function addPasswordEyes(root) {
+  var list = (root || document).querySelectorAll('input[type="password"]:not([data-eye])');
+  for (var i = 0; i < list.length; i++) {
+    var inp = list[i];
+    inp.setAttribute('data-eye', '1');
+    var wrap = document.createElement('span');
+    wrap.className = 'pwwrap';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pweye';
+    b.setAttribute('aria-label', 'Show password');
+    b.innerHTML = EYE_OPEN;
+    wrap.appendChild(b);
+  }
+}
+/* mousedown is stopped so the field keeps focus (and the phone keeps its
+   keyboard up) while the eye is tapped. */
+document.addEventListener('mousedown', function (ev) { if (ev.target.closest('.pweye')) ev.preventDefault(); });
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest('.pweye'); if (!b) return;
+  ev.preventDefault();
+  var inp = b.parentNode.querySelector('input');
+  var show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  b.innerHTML = show ? EYE_SHUT : EYE_OPEN;
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+});
+new MutationObserver(function () { addPasswordEyes(); }).observe(document.body, { childList: true, subtree: true });
+addPasswordEyes();
 
 /* =====================================================================
    EVENTS — one listener for every tap
