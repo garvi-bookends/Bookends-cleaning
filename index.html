@@ -670,21 +670,6 @@ html[data-theme="dark"] .rcard.low .why{color:#f8cf7a}
 .rck{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .rbtns{display:flex;gap:8px}
 .rbtns .btn{min-height:44px;font-size:14px;flex:1;padding:8px}
-/* the simple restaurant list on the dashboard */
-.rlist{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);overflow:hidden}
-.rrow{display:flex;align-items:center;gap:12px;width:100%;padding:14px 16px;background:none;border:0;border-bottom:1px solid var(--line);
-  font:inherit;color:inherit;text-align:left;cursor:pointer}
-.rrow:last-child{border-bottom:0}
-.rrow:active{background:var(--bg)}
-.rdot{width:10px;height:10px;border-radius:50%;background:#2e9d62;flex:none}
-.rrow.low .rdot{background:#e0a21f}
-.rrow.high .rdot{background:#e5484d}
-.rtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-.rtx b{font-size:16px;font-weight:750}
-.rtx span{font-size:13px;color:var(--mut);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rrow.high .rtx span{color:#c4262e}
-html[data-theme="dark"] .rrow.high .rtx span{color:#ff9aa1}
-@media (min-width:900px){ .rrow:hover{background:var(--bg)} }
 
 /* ---------- list cards (tasks, labels) ---------- */
 .items{display:grid;gap:10px}
@@ -1947,42 +1932,28 @@ PAGES.dashboard = function () {
     tile(T.labels.EXPIRED, 'Expired', T.labels.EXPIRED ? 'bad' : 'ok', 'labeling', 'EXPIRED') + '</div></div>' +
     '</div>';
 
-  /* One plain row per restaurant: its name, what is waiting, and a status.
-     Everything else (the numbers, each checklist, the shortcuts) opens in a
-     sheet on tap, so the list itself stays easy to scan. */
   html += '<div class="sec-t">Restaurants' + (needs ? ' · ' + plural(needs, 'needs', 'need') + ' attention' : ' · all on track') + '</div>' +
-    '<div class="rlist">' + d.restaurants.map(function (r) {
-      return '<button class="rrow ' + r.attention + '" data-a="restOpen" data-x="' + r.id + '">' +
-        '<span class="rdot"></span>' +
-        '<span class="rtx"><b>' + h(r.name) + '</b><span>' + (r.reasons.length ? h(r.reasons.join(' · ')) : 'All good') + '</span></span>' +
-        restStatus(r) + '</button>';
+    '<div class="rgrid">' + d.restaurants.map(function (r) {
+      return '<div class="rcard ' + r.attention + '">' +
+        '<div class="row"><div class="grow"><h3>' + h(r.name) + '</h3><div class="city">' + h(r.city) + ' · ' + h(r.code) + '</div></div>' +
+        (r.attention === 'high' ? st('Needs attention', 'bad') : r.attention === 'low' ? st('Check', 'warn') : st('On track', 'ok')) + '</div>' +
+        '<div class="why">' + (r.reasons.length ? h(r.reasons.join(' · ')) : 'Nothing waiting') + '</div>' +
+        '<div class="rnums">' +
+        '<div><b' + (r.tasks.overdue ? ' style="color:#c4262e"' : '') + '>' + r.tasks.pending + '</b><span>Pending tasks</span></div>' +
+        '<div><b>' + r.tasks.doneToday + '</b><span>Done today</span></div>' +
+        '<div><b' + (r.labels.EXPIRED ? ' style="color:#c4262e"' : r.labels.EXPIRING ? ' style="color:#b06a00"' : '') + '>' + (r.labels.EXPIRED + r.labels.EXPIRING) + '</b><span>Labels to check</span></div>' +
+        '</div>' +
+        '<div class="rck">' + r.checklists.map(function (c) {
+          var s = c.status === 'PENDING' && c.open ? 'OPEN' : c.status;
+          return '<span class="xs b" style="display:inline-flex;align-items:center;gap:5px">' + h(c.label.replace(' Checklist', '')) + ' ' + ckBadge(s) + '</span>';
+        }).join('') + (r.checklists.length ? '' : '<span class="xs b muted">No checklist has opened yet today</span>') + '</div>' +
+        '<div class="rbtns">' +
+        '<button class="btn sec" data-a="dashGo" data-x="checklist" data-l="' + r.id + '">Checklists</button>' +
+        '<button class="btn sec" data-a="dashGo" data-x="labeling" data-l="' + r.id + '">Labels</button></div>' +
+        '</div>';
     }).join('') + '</div>';
   return html;
 };
-function restStatus(r) { return r.attention === 'high' ? st('Attention', 'bad') : r.attention === 'low' ? st('Check', 'warn') : st('On track', 'ok'); }
-/* The full picture for one restaurant, from the dashboard's own data. */
-function restOpen(id) {
-  var d = DATA.dashboard, r = d && d.restaurants && d.restaurants.filter(function (x) { return x.id === id; })[0];
-  if (!r) return;
-  openSheet(r.name,
-    '<div class="card">' +
-    '<div class="row" style="margin-bottom:6px"><div class="grow sm muted b">' + h(r.city) + ' · ' + h(r.code) + '</div>' + restStatus(r) + '</div>' +
-    '<div class="b" style="margin-bottom:12px">' + (r.reasons.length ? h(r.reasons.join(' · ')) : 'Nothing waiting') + '</div>' +
-    '<div class="rnums">' +
-    '<div><b' + (r.tasks.overdue ? ' style="color:#c4262e"' : '') + '>' + r.tasks.pending + '</b><span>Pending tasks</span></div>' +
-    '<div><b>' + r.tasks.doneToday + '</b><span>Done today</span></div>' +
-    '<div><b' + (r.labels.EXPIRED ? ' style="color:#c4262e"' : r.labels.EXPIRING ? ' style="color:#b06a00"' : '') + '>' + (r.labels.EXPIRED + r.labels.EXPIRING) + '</b><span>Labels to check</span></div>' +
-    '</div>' +
-    '<div class="sm muted b" style="margin-bottom:6px">Checklists today</div>' +
-    (r.checklists.length ? r.checklists.map(function (c) {
-      var s = c.status === 'PENDING' && c.open ? 'OPEN' : c.status;
-      return '<div class="row" style="padding:6px 0"><div class="grow b">' + h(c.label.replace(' Checklist', '')) + '</div>' + ckBadge(s) + '</div>';
-    }).join('') : '<div class="sm muted">No checklist has opened yet today</div>') +
-    '</div>' +
-    '<div class="btnrow">' +
-    '<button class="btn sec" data-a="dashGo" data-x="checklist" data-l="' + r.id + '">Checklists</button>' +
-    '<button class="btn sec" data-a="dashGo" data-x="labeling" data-l="' + r.id + '">Labels</button></div>', 'rest');
-}
 function tile(n, label, kind, page, filter) {
   if (page === 'tasks') return '<div class="tile ' + (kind || '') + '"><b>' + n + '</b><span>' + h(label) + '</span></div>';
   return '<button class="tile ' + (kind || '') + '" data-a="tileGo" data-x="' + page + '" data-f="' + filter + '"><b>' + n + '</b><span>' + h(label) + '</span></button>';
@@ -2934,8 +2905,7 @@ document.addEventListener('click', function (ev) {
 
     /* dashboard */
     case 'tileGo': dashGo(x, '', el.getAttribute('data-f')); break;
-    case 'dashGo': closeSheet(); dashGo(x, el.getAttribute('data-l')); break;
-    case 'restOpen': restOpen(x); break;
+    case 'dashGo': dashGo(x, el.getAttribute('data-l')); break;
 
     /* tasks */
     case 'taskView': S.taskView = x; paint(); break;
