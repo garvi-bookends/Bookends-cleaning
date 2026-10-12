@@ -927,8 +927,10 @@ html[data-theme="dark"] .btn.sec,html[data-theme="dark"] .chip:not(.on){backgrou
 html[data-theme="dark"] .card,html[data-theme="dark"] .tile,html[data-theme="dark"] .item,html[data-theme="dark"] .dgroup,html[data-theme="dark"] .rcard,
 html[data-theme="dark"] .ckcard,html[data-theme="dark"] .gotile{background:#131c38;background-image:none;border-color:#26325a}
 /* ---------- show / hide password eye ---------- */
-.pwwrap{position:relative;display:block}
-.pwwrap .inp{padding-right:54px !important}
+/* The wrapper is a <span> inside label.f, so it would pick up the label's
+   bold uppercase heading style; the field must type in plain text. */
+label.f>span.pwwrap,.pwwrap{position:relative;display:block;margin:0;font-size:inherit;font-weight:400;text-transform:none;letter-spacing:normal}
+.pwwrap .inp{padding-right:54px !important;font-weight:400 !important;text-transform:none !important;letter-spacing:normal !important;color:var(--ink) !important}
 .pweye{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;background:none;
   display:grid;place-items:center;color:var(--mut);cursor:pointer;border-radius:50%;padding:0}
 .pweye:active{background:rgba(0,0,0,.06)}
