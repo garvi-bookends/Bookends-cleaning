@@ -1576,8 +1576,6 @@ function profileMenu() {
     '<div class="xs muted">' + h(ME.uid) + (ME.loc ? ' · ' + h(lname(ME.loc)) : '') + '</div>' +
     '<span class="role-chip">' + h(roleLabel(ME.role)) + '</span></div></div>' +
     (isManager() ? '<button data-a="go" data-x="users" role="menuitem">' + ic('users') + 'User accounts</button>' : '') +
-    '<button data-a="changePw" role="menuitem">' + ic('key') + 'Change password</button>' +
-    '<button data-a="theme" role="menuitem">' + ic(isDark() ? 'sun' : 'moon') + (isDark() ? 'Light mode' : 'Dark mode') + '</button>' +
     '<button class="out" data-a="logout" role="menuitem">' + ic('logout') + 'Logout</button></div>';
 }
 
