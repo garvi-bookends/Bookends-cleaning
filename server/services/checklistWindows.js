@@ -122,7 +122,31 @@ function fmtMinutes(m) {
 
 function rangeLabel(win) { return fmtMinutes(win.start) + ' to ' + fmtMinutes(win.end); }
 
+/* ---------------------------------------------------------------------------
+   No time limit. Checklists are open all day: one Lunch, one Dinner and one
+   Closing per restaurant per IST calendar day, sent whenever it suits. The
+   windows above are kept (the Flutter app and its tests still use them),
+   but the web app and the API now judge a checklist by its day.
+   --------------------------------------------------------------------------- */
+function dayBounds(ymd) {
+  return { startsAt: istInstant(ymd, 0), endsAt: istInstant(addDaysYmd(ymd, 1), 0) };
+}
+
+function dayState(win, ms) {
+  var ymd = istParts(ms).ymd;
+  var b = dayBounds(ymd);
+  return { type: win.type, label: win.label, open: true, shiftDate: ymd,
+    startsAt: b.startsAt, endsAt: b.endsAt, nextOpensAt: null };
+}
+
+function allDayStates(ms) {
+  return WINDOWS.map(function (w) { return dayState(w, ms); });
+}
+
 module.exports = {
+  dayBounds: dayBounds,
+  dayState: dayState,
+  allDayStates: allDayStates,
   IST_OFFSET_MIN: IST_OFFSET_MIN,
   WINDOWS: WINDOWS,
   TYPES: TYPES,

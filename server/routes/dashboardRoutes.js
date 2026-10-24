@@ -28,7 +28,7 @@ router.get('/', asyncHandler(function (req, res) {
   var dayStart = new Date(windows.istInstant(today, 0));
   /* The current (or most recent) shift of each checklist. Closing at 00:30
      still belongs to yesterday's shift. */
-  var states = windows.allStates(now);
+  var states = windows.allDayStates(now);
   var dates = [];
   states.forEach(function (s) { if (dates.indexOf(s.shiftDate) === -1) dates.push(s.shiftDate); });
 
@@ -59,11 +59,8 @@ router.get('/', asyncHandler(function (req, res) {
     var rows = restaurants.RESTAURANTS.map(function (r) {
       var t = taskBy[r.id] || { pending: 0, overdue: 0, done_today: 0, done: 0 };
       var l = labelBy[r.id] || { ACTIVE: 0, EXPIRING: 0, EXPIRED: 0 };
-      /* Only checklists that have opened count: one that opens later today
-         is not pending yet. */
-      var cks = states.filter(function (s) {
-        return s.open || now >= s.endsAt || sent[r.id + '|' + s.type + '|' + s.shiftDate];
-      }).map(function (s) {
+      /* Checklists are open all day: today's are Submitted or Pending. */
+      var cks = states.map(function (s) {
         var sub = sent[r.id + '|' + s.type + '|' + s.shiftDate];
         var status = sub ? 'SUBMITTED'
           : (now < s.endsAt ? 'PENDING' : (s.shiftDate >= since ? 'MISSED' : 'PENDING'));

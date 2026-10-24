@@ -1942,9 +1942,9 @@ PAGES.dashboard = function () {
         '<div><b' + (r.labels.EXPIRED ? ' style="color:#c4262e"' : r.labels.EXPIRING ? ' style="color:#b06a00"' : '') + '>' + (r.labels.EXPIRED + r.labels.EXPIRING) + '</b><span>Labels to check</span></div>' +
         '</div>' +
         '<div class="rck">' + r.checklists.map(function (c) {
-          var s = c.status === 'PENDING' && c.open ? 'OPEN' : c.status;
+          var s = c.status;
           return '<span class="xs b" style="display:inline-flex;align-items:center;gap:5px">' + h(c.label.replace(' Checklist', '')) + ' ' + ckBadge(s) + '</span>';
-        }).join('') + (r.checklists.length ? '' : '<span class="xs b muted">No checklist has opened yet today</span>') + '</div>' +
+        }).join('') + '' + '</div>' +
         '<div class="rbtns">' +
         '<button class="btn sec" data-a="dashGo" data-x="checklist" data-l="' + r.id + '">Checklists</button>' +
         '<button class="btn sec" data-a="dashGo" data-x="labeling" data-l="' + r.id + '">Labels</button></div>' +
@@ -2097,8 +2097,8 @@ function markDone() {
 }
 
 /* =====================================================================
-   CHECKLIST — Lunch 12:00–1:30 PM, Dinner 5:00–6:00 PM, Closing 10:00 PM–1:00 AM
-   User: fill in what is open. Admin: see every restaurant's submissions,
+   CHECKLIST — Lunch, Dinner and Closing, open all day (no time limit).
+   One of each per restaurant per IST day. User: fill them in. Admin: see every restaurant's submissions,
    and add, edit or remove the items each checklist asks.
    ===================================================================== */
 var CK_TYPES = [['LUNCH', 'Lunch'], ['DINNER', 'Dinner'], ['CLOSING', 'Closing']];
@@ -2110,7 +2110,7 @@ PAGES.checklist = function () { return isAdmin() ? ckAdminPage() : ckUserPage();
 function ckUserPage() {
   var d = need('ckStatus', '/api/checklists/status');
   var items = need('ckItems', '/api/checklists/items');
-  var html = pageHead('Checklist', lname(ME.loc) + ' · times are IST');
+  var html = pageHead('Checklist', lname(ME.loc) + ' · open all day');
   if (!d || d._err || !items || items._err) return html + loadingHtml(d && d._err ? d : items, 'checklists');
   html += '<div class="ckcards">' + d.windows.map(function (w) {
     var win = CHKW.byType(w.type);
@@ -2121,20 +2121,14 @@ function ckUserPage() {
       status = ckBadge('SUBMITTED');
       body = '<div class="sm">Submitted by <b>' + h(sub.userName) + '</b> at ' + h(clock(sub.submittedAt)) + '</div>' +
         '<button class="btn sec" data-a="ckRecord" data-x="' + sub.id + '">View</button>';
-    } else if (w.open) {
-      status = ckBadge('OPEN');
-      body = '<div class="sm b">Closes at ' + h(clock(w.endsAt)) + ' · ' + span(w.endsAt - now()) + ' left</div>' +
-        '<button class="btn" data-a="ckFill" data-x="' + w.type + '">Open checklist</button>';
-    } else if (now() >= w.endsAt) {
-      status = ckBadge('MISSED');
-      body = '<div class="sm">Not submitted. Opens again ' + h(when(w.nextOpensAt)) + '.</div>';
     } else {
       status = ckBadge('PENDING');
-      body = '<div class="sm">Opens ' + h(when(w.nextOpensAt || w.startsAt)) + '</div>';
+      body = '<div class="sm">Not submitted yet today</div>' +
+        '<button class="btn" data-a="ckFill" data-x="' + w.type + '">Open checklist</button>';
     }
-    return '<div class="ckcard' + (w.open && !sub ? ' open' : '') + '">' +
+    return '<div class="ckcard' + (sub ? '' : ' open') + '">' +
       '<div class="row"><h3 class="grow">' + h(win.label.replace(' Checklist', '')) + '</h3>' + status + '</div>' +
-      '<div class="when">' + CHKW.fmtMinutes(win.start) + ' – ' + CHKW.fmtMinutes(win.end) + (w.type === 'CLOSING' ? ' (next day)' : '') + ' · ' + plural(count, 'item') + '</div>' +
+      '<div class="when">' + plural(count, 'item') + '</div>' +
       body + '</div>';
   }).join('') + '</div>';
 
@@ -2153,17 +2147,12 @@ function ckRecordItem(c) {
 
 /* ---------- user: filling one in ---------- */
 function ckDraft(type) {
-  var w = CHKW.windowState(CHKW.byType(type), now());
+  var day = todayYmd();
   var d = CKD[type];
-  if (!d || d.shift !== w.shiftDate) d = CKD[type] = { shift: w.shiftDate, done: {}, err: '' };
+  if (!d || d.shift !== day) d = CKD[type] = { shift: day, done: {}, err: '' };
   return d;
 }
 function openChecklistFill(type, fromReminder) {
-  var w = CHKW.windowState(CHKW.byType(type), now());
-  if (!w.open) {
-    if (fromReminder) toast(CHKW.byType(type).label + ' opens at ' + CHKW.fmtMinutes(CHKW.byType(type).start));
-    return;
-  }
   var st = DATA.ckStatus && DATA.ckStatus.windows && DATA.ckStatus.windows.filter(function (x) { return x.type === type; })[0];
   if (st && st.submission) { if (fromReminder) toast('Already submitted'); return; }
   Api.get('/api/checklists/items?type=' + type).then(function (res) {
@@ -2175,13 +2164,12 @@ function openChecklistFill(type, fromReminder) {
 }
 function drawFill(type) {
   var d = ckDraft(type), items = d.items || [];
-  var w = CHKW.windowState(CHKW.byType(type), now());
   var req = items.filter(function (i) { return i.required; });
   var reqDone = req.filter(function (i) { return d.done[i.id]; }).length;
   var photoNeeded = items.filter(function (i) { return i.photoRequired; });
   var photosDone = photoNeeded.filter(function (i) { return photoReady('ck:' + i.id); }).length;
   var html = '<div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
-    '<div class="grow"><div class="b">' + h(lname(ME.loc)) + '</div><div class="sm muted b">Closes at ' + h(clock(w.endsAt)) + ' · ' + span(w.endsAt - now()) + ' left</div></div>' +
+    '<div class="grow"><div class="b">' + h(lname(ME.loc)) + '</div><div class="sm muted b">' + h(dayLabel(todayYmd())) + '</div></div>' +
     '<div class="b" style="font-size:18px">' + reqDone + ' / ' + req.length + '<div class="xs muted">done</div></div></div>' +
     (d.err ? '<div class="formerr">' + h(d.err) + '</div>' : '') +
     '<div class="card pad0">' + items.map(function (it) {
@@ -2249,7 +2237,7 @@ function openChecklistRecord(id) {
 
 /* ---------- admin: submissions and items ---------- */
 function ckAdminPage() {
-  var html = pageHead('Checklist', 'Lunch 12:00–1:30 PM · Dinner 5:00–6:00 PM · Closing 10:00 PM–1:00 AM (IST)');
+  var html = pageHead('Checklist', 'Lunch, Dinner and Closing · open all day');
   html += chips('ckTab', [['board', 'Submissions'], ['items', 'Checklist items']], S.ckTab);
   return html + (S.ckTab === 'items' ? ckItemsManager() : ckBoard());
 }
@@ -2272,15 +2260,15 @@ function ckBoard() {
   if (S.ckStatus) html += '<button class="linkish b sm" data-a="ckStatus" data-x="" style="margin:-4px 0 10px">Show all statuses</button>';
   if (!rows.length) {
     return html + (S.ckDate === todayYmd() && !S.ckStatus
-      ? '<div class="empty"><div class="b">No checklist has opened yet today</div><div class="sm">Lunch opens at 12:00 PM, Dinner at 5:00 PM and Closing at 10:00 PM. Each one appears here when it opens.</div></div>'
+      ? '<div class="empty"><div class="b">Nothing to show</div><div class="sm">Try another restaurant or checklist.</div></div>'
       : '<div class="empty"><div class="b">Nothing to show</div><div class="sm">Try another date, restaurant or status.</div></div>');
   }
   return html + '<div class="items">' + rows.map(function (r) {
-    var s = r.status === 'PENDING' && r.open ? 'OPEN' : r.status;
+    var s = r.status;
     var meta = r.submission
       ? 'by ' + r.submission.userName + ' at ' + clock(r.submission.submittedAt) + (r.submission.total != null ? ' · ' + r.submission.ticked + '/' + r.submission.total + ' ticked' : '') + (r.submission.photos ? ' · ' + plural(r.submission.photos, 'photo') : '')
-      : r.status === 'MISSED' ? 'Closed at ' + clock(r.endsAt) + ' without a submission'
-      : r.open ? 'Open now · closes ' + clock(r.endsAt) : 'Opens ' + when(r.startsAt);
+      : r.status === 'MISSED' ? 'Not submitted that day'
+      : 'Not submitted yet';
     return '<button class="item' + (r.status === 'MISSED' ? ' bad' : '') + '"' + (r.submission ? ' data-a="ckRecord" data-x="' + r.submission.id + '"' : ' style="cursor:default"') + '>' +
       '<span class="tx"><span class="tt">' + h(r.restaurant) + ' · ' + h(r.label.replace(' Checklist', '')) + '</span>' +
       '<span class="mt" style="display:block">' + h(dayLabel(r.date)) + ' · ' + h(meta) + '</span></span><span class="rt">' + ckBadge(s) + '</span></button>';

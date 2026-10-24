@@ -130,7 +130,9 @@ function tick(now) {
   now = now || Date.now();
   lastRun = Date.now();
   running = Promise.all([
-    checklistReminders(now).catch(function (err) { console.error('[scheduler] checklist reminders failed:', err.message); }),
+    /* Checklists have no time limit any more, so there is no "opens/closes
+       in 5 minutes" to send. checklistReminders() is kept for if windows return. */
+    Promise.resolve(),
     labelExpiry().catch(function (err) { console.error('[scheduler] label expiry failed:', err.message); return 0; })
   ]).then(function (r) {
     running = null;

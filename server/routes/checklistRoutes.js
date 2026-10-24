@@ -60,7 +60,7 @@ function failure(message, status, code) {
    --------------------------------------------------------------------------- */
 router.get('/status', asyncHandler(function (req, res) {
   var now = Date.now();
-  var states = windows.allStates(now);
+  var states = windows.allDayStates(now);
   var dates = [];
   states.forEach(function (s) { if (dates.indexOf(s.shiftDate) === -1) dates.push(s.shiftDate); });
 
@@ -203,12 +203,10 @@ router.get('/board', asyncHandler(function (req, res) {
     for (var d = to; d >= from; d = windows.addDaysYmd(d, -1)) {
       types.forEach(function (type) {
         var win = windows.byType(type);
-        var b = windows.shiftBounds(win, d);
+        var b = windows.dayBounds(d);
         locs.forEach(function (loc) {
           var sub = byKey[loc + '|' + type + '|' + d] || null;
           var status;
-          /* A checklist is listed from the moment it opens, not before. */
-          if (!sub && now < b.startsAt) return;
           if (sub) status = 'SUBMITTED';
           else if (now < b.endsAt) status = 'PENDING';
           else if (d >= since) status = 'MISSED';
@@ -217,7 +215,7 @@ router.get('/board', asyncHandler(function (req, res) {
           if (wantStatus && wantStatus !== status) return;
           rows.push({
             date: d, type: type, label: win.label, loc: loc, restaurant: restaurants.nameOf(loc),
-            status: status, open: !sub && now >= b.startsAt && now < b.endsAt,
+            status: status, open: !sub && now < b.endsAt,
             startsAt: b.startsAt, endsAt: b.endsAt,
             submission: sub ? { id: sub.id, userName: sub.userName, submittedAt: sub.submittedAt, ticked: sub.ticked, total: sub.total, photos: sub.photos } : null
           });
@@ -238,13 +236,9 @@ router.post('/', access.requireWriter, audit.withActor, asyncHandler(function (r
   var win = windows.byType(type);
   if (!win) return fail(res, 400, 'Choose Lunch, Dinner or Closing.');
 
-  /* The time check comes before anything else that could succeed. */
+  /* No time limit: open all day, once per restaurant per IST day. */
   var now = Date.now();
-  var state = windows.windowState(win, now);
-  if (!state.open) {
-    return fail(res, 403, win.label + ' is currently unavailable. Available from ' +
-      windows.rangeLabel(win) + '.', 'CHECKLIST_CLOSED');
-  }
+  var state = windows.dayState(win, now);
 
   /* A location manager is pinned to their own restaurant by their signed
      token. An admin names the restaurant they are filling it in for. */
